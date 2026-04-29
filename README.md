@@ -10,4 +10,3 @@ srun list
 srun <script_name>
 ```
 
-Ensure each project has a `scripts/` folder with your `.sh` files next to where you `cd` before calling `srun`.
