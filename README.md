@@ -21,6 +21,16 @@ Everything is resolved relative to where you run `srun` (usually the repo root):
 
 **Prebuilt binaries** are on **[GitHub Releases](https://github.com/Ahineya/srun/releases)** as versioned archives: `srun-<version>-macos-aarch64.tar.gz`, `srun-<version>-linux-x86_64.tar.gz`, and `srun-<version>-linux-aarch64.tar.gz`, each with a `.sha256` file. Extract `srun` from the archive, put it on your `PATH`, and `chmod +x` if needed.
 
+### macOS (download quarantine)
+
+Release binaries are **not** Apple-notarized or stapled. After you extract `srun`, Gatekeeper may block it until you clear the download quarantine attribute:
+
+```bash
+xattr -cr /path/to/srun
+```
+
+(or `xattr -d com.apple.quarantine /path/to/srun` on that single file). Adjust the path to wherever you placed the binary.
+
 From source:
 
 ```bash
