@@ -1,5 +1,9 @@
-# Runs only when you push a version tag (e.g. v0.3.0). Builds all targets and
-# uploads binaries to the GitHub Release for that tag — no skipped publish step.
+# Tag-only release: no CI on branch pushes. After bumping Cargo.toml (optional):
+#
+#   git commit -am "Release vX.Y.Z"
+#   git tag -a vX.Y.Z -m "srun vX.Y.Z"
+#   git push origin main && git push origin vX.Y.Z
+#
 name: Release
 
 on:
