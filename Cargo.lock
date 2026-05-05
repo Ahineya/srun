@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "srun"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde_json",
 ]

@@ -19,7 +19,7 @@ Everything is resolved relative to where you run `srun` (usually the repo root):
 
 ## Install
 
-**Prebuilt binaries** for Apple Silicon macOS, Linux x64, and Linux ARM64 are attached to each **[GitHub Release](https://github.com/Ahineya/srun/releases)** (`srun-darwin-arm64`, `srun-linux-amd64`, `srun-linux-arm64`). Download the file for your platform, put it on your `PATH`, and `chmod +x` if needed.
+**Prebuilt binaries** are on **[GitHub Releases](https://github.com/Ahineya/srun/releases)** as versioned archives: `srun-<version>-macos-aarch64.tar.gz`, `srun-<version>-linux-x86_64.tar.gz`, and `srun-<version>-linux-aarch64.tar.gz`, each with a `.sha256` file. Extract `srun` from the archive, put it on your `PATH`, and `chmod +x` if needed.
 
 From source:
 
