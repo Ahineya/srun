@@ -1,11 +1,14 @@
-# CI on branches and PRs — builds only (workflow artifacts). No release job here.
-name: Build
+# Runs only when you push a version tag (e.g. v0.3.0). Builds all targets and
+# uploads binaries to the GitHub Release for that tag — no skipped publish step.
+name: Release
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-  workflow_dispatch:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,7 +45,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: release-${{ matrix.target }}
 
       - name: Install AArch64 Linux linker
         if: matrix.setup_cross
@@ -67,3 +70,33 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: target/${{ matrix.target }}/release/srun
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: srun-*
+          path: dist
+          merge-multiple: true
+
+      - name: Stage release files
+        run: |
+          mkdir -p upload
+          cp dist/srun-darwin-arm64/srun upload/srun-darwin-arm64
+          cp dist/srun-linux-amd64/srun upload/srun-linux-amd64
+          cp dist/srun-linux-arm64/srun upload/srun-linux-arm64
+          chmod +x upload/*
+
+      - name: Create release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: upload/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
