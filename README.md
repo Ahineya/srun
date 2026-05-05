@@ -9,3 +9,5 @@ cargo install --path .
 srun list
 srun <script_name>
 ```
+
+Optional shell completions (tab-complete script names): install `srun`, then run `srun install-completions`. It detects your login shell from `$SHELL` (bash, zsh, or fish); use `--shell bash|zsh|fish` if that does not match the shell you actually use. Reload your shell (new terminal, `exec zsh`, or `source ~/.bashrc`) afterward.

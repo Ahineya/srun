@@ -20,6 +20,19 @@ fn display_width(s: &str) -> usize {
     s.chars().count()
 }
 
+fn collect_script_names() -> Result<BTreeSet<String>, std::io::Error> {
+    let mut all = BTreeSet::new();
+    for n in list_shell_names()? {
+        all.insert(n);
+    }
+    if let Some(pkg) = read_package_json() {
+        for n in list_npm_script_names(&pkg) {
+            all.insert(n);
+        }
+    }
+    Ok(all)
+}
+
 fn list_shell_names() -> Result<Vec<String>, std::io::Error> {
     let dir = scripts_dir();
     if !dir.is_dir() {
@@ -173,6 +186,284 @@ fn run_shell_script(script: &Path, forwarded: &[String]) -> process::ExitStatus 
         })
 }
 
+fn cmd_complete(prefix: &str) -> Result<(), std::io::Error> {
+    let mut words = BTreeSet::new();
+    words.insert("completions".to_string());
+    words.insert("install-completions".to_string());
+    words.insert("list".to_string());
+    for n in collect_script_names()? {
+        words.insert(n);
+    }
+    for w in words {
+        if w.starts_with(prefix) {
+            println!("{w}");
+        }
+    }
+    Ok(())
+}
+
+fn print_completions_bash() {
+    print!("{}", include_str!("../completions/srun.bash"));
+}
+
+fn print_completions_zsh() {
+    print!("{}", include_str!("../completions/srun.zsh"));
+}
+
+fn print_completions_fish() {
+    print!("{}", include_str!("../completions/srun.fish"));
+}
+
+#[cfg(unix)]
+const SRUN_RC_MARKER_START: &str = "# BEGIN srun completion";
+#[cfg(unix)]
+const SRUN_RC_MARKER_END: &str = "# END srun completion";
+
+#[cfg(unix)]
+fn home_dir() -> Result<PathBuf, String> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is not set".to_string())
+}
+
+#[cfg(unix)]
+fn detect_shell(override_shell: Option<&str>) -> Result<&'static str, String> {
+    if let Some(s) = override_shell {
+        return match s {
+            "bash" => Ok("bash"),
+            "zsh" => Ok("zsh"),
+            "fish" => Ok("fish"),
+            _ => Err(format!("unknown shell '{s}', expected bash|zsh|fish")),
+        };
+    }
+    let shell = env::var("SHELL").map_err(|_| {
+        "SHELL is not set; use: srun install-completions --shell bash|zsh|fish".to_string()
+    })?;
+    let name = Path::new(&shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("SHELL is not a usable path: {shell}"))?;
+    match name {
+        "bash" => Ok("bash"),
+        "zsh" => Ok("zsh"),
+        "fish" => Ok("fish"),
+        _ => Err(format!(
+            "could not infer shell from SHELL={shell}; use: srun install-completions --shell bash|zsh|fish",
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn parse_install_args(rest: &[String]) -> Result<Option<String>, String> {
+    match rest.split_first() {
+        None => Ok(None),
+        Some((first, tail)) => {
+            if first == "--shell" {
+                let s = tail
+                    .first()
+                    .ok_or_else(|| "--shell requires a value".to_string())?;
+                if !tail[1..].is_empty() {
+                    return Err("too many arguments after --shell".into());
+                }
+                return Ok(Some(s.clone()));
+            }
+            if first.starts_with('-') {
+                return Err("usage: srun install-completions [--shell bash|zsh|fish]".into());
+            }
+            if !tail.is_empty() {
+                return Err("too many arguments".into());
+            }
+            Ok(Some(first.clone()))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn rc_has_srun_block(path: &Path) -> io::Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let s = fs::read_to_string(path)?;
+    Ok(s.contains(SRUN_RC_MARKER_START))
+}
+
+/// Removes a previously installed srun rc block so we can relocate it (e.g. prepend for Oh My Zsh).
+#[cfg(unix)]
+fn strip_srun_rc_block(content: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut skipping = false;
+    for line in content.lines() {
+        let t = line.trim();
+        if t == SRUN_RC_MARKER_START {
+            skipping = true;
+            continue;
+        }
+        if t == SRUN_RC_MARKER_END {
+            skipping = false;
+            continue;
+        }
+        if !skipping {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
+/// Places the fpath snippet before `oh-my-zsh` when present; otherwise prepends (needed before compinit).
+#[cfg(unix)]
+fn merge_zshrc_with_srun_fpath(trimmed_body: &str, snippet: &str) -> String {
+    if trimmed_body.is_empty() {
+        return snippet.to_string();
+    }
+
+    let lines: Vec<&str> = trimmed_body.lines().collect();
+    let omz_idx = lines.iter().position(|l| {
+        let t = l.trim();
+        !t.starts_with('#') && t.contains("oh-my-zsh")
+    });
+
+    if let Some(i) = omz_idx {
+        let mut out = String::new();
+        for line in &lines[..i] {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(snippet);
+        out.push('\n');
+        for line in &lines[i..] {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    } else {
+        format!("{snippet}\n{trimmed_body}\n")
+    }
+}
+
+#[cfg(unix)]
+fn append_rc_snippet(path: &Path, snippet: &str) -> io::Result<()> {
+    if rc_has_srun_block(path)? {
+        return Ok(());
+    }
+    let mut opts = fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
+    if f.metadata()?.len() > 0 {
+        writeln!(f)?;
+    }
+    f.write_all(snippet.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_completion_file(path: &Path, contents: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)
+}
+
+#[cfg(unix)]
+fn install_completions_bash(home: &Path) -> Result<(), String> {
+    let script_path = home.join(".config/srun/completion.bash");
+    write_completion_file(&script_path, include_str!("../completions/srun.bash"))
+        .map_err(|e| e.to_string())?;
+
+    let rc = if home.join(".bashrc").exists() {
+        home.join(".bashrc")
+    } else if home.join(".bash_profile").exists() {
+        home.join(".bash_profile")
+    } else {
+        home.join(".bashrc")
+    };
+
+    let snippet = format!(
+        "\n{SRUN_RC_MARKER_START}\n[[ -f \"$HOME/.config/srun/completion.bash\" ]] && source \"$HOME/.config/srun/completion.bash\"\n{SRUN_RC_MARKER_END}\n"
+    );
+    append_rc_snippet(&rc, &snippet).map_err(|e| e.to_string())?;
+
+    eprintln!("Wrote {}", script_path.display());
+    eprintln!("Updated {} (restart bash or: source {})", rc.display(), rc.display());
+    Ok(())
+}
+
+#[cfg(unix)]
+fn install_completions_zsh(home: &Path) -> Result<(), String> {
+    let comp_path = home.join(".zsh/completions/_srun");
+    write_completion_file(&comp_path, include_str!("../completions/srun.zsh")).map_err(|e| e.to_string())?;
+
+    let zshrc = home.join(".zshrc");
+    let existing = if zshrc.exists() {
+        fs::read_to_string(&zshrc).map_err(|e| e.to_string())?
+    } else {
+        String::new()
+    };
+    let body = strip_srun_rc_block(&existing).trim().to_string();
+
+    // Must run before Oh My Zsh's `compinit` (OMZ runs it while sourcing oh-my-zsh.sh).
+    let snippet = format!(
+        "{SRUN_RC_MARKER_START}\n\
+         # Before oh-my-zsh: OMZ runs compinit on load; ~/.zsh/completions must be on fpath first.\n\
+         fpath=(\"$HOME/.zsh/completions\" $fpath)\n\
+         {SRUN_RC_MARKER_END}\n"
+    );
+
+    let new_zshrc = merge_zshrc_with_srun_fpath(&body, &snippet);
+
+    fs::write(&zshrc, new_zshrc).map_err(|e| e.to_string())?;
+
+    eprintln!("Wrote {}", comp_path.display());
+    eprintln!(
+        "Updated {}: srun fpath is placed before oh-my-zsh (or at the top if OMZ was not found).",
+        zshrc.display()
+    );
+    eprintln!(
+        "Reload: exec zsh. If Tab still lists files: noglob rm -f ~/.zcompdump*; exec zsh"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+fn install_completions_fish(home: &Path) -> Result<(), String> {
+    let cfg = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let fish_path = cfg.join("fish/completions/srun.fish");
+    write_completion_file(&fish_path, include_str!("../completions/srun.fish")).map_err(|e| e.to_string())?;
+    eprintln!("Wrote {}", fish_path.display());
+    eprintln!("Fish loads completions automatically; open a new shell if needed.");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn cmd_install_completions_unix(rest: &[String]) -> Result<(), String> {
+    let home = home_dir()?;
+    let override_shell = parse_install_args(rest)?;
+    let shell = detect_shell(override_shell.as_deref())?;
+    eprintln!("Installing srun completions for {shell}...");
+    match shell {
+        "bash" => install_completions_bash(&home),
+        "zsh" => install_completions_zsh(&home),
+        "fish" => install_completions_fish(&home),
+        _ => Err("internal error: invalid shell".into()),
+    }
+}
+
+fn cmd_install_completions(rest: &[String]) -> Result<(), String> {
+    #[cfg(not(unix))]
+    {
+        let _ = rest;
+        return Err("install-completions is only supported on Unix".into());
+    }
+    #[cfg(unix)]
+    cmd_install_completions_unix(rest)
+}
+
 fn prompt_shell_or_npm(name: &str, pm: &str) -> u8 {
     eprintln!("srun: '{name}' matches both scripts/{name}.sh and package.json \"{name}\".");
     eprintln!("  [1] shell script (sh scripts/{name}.sh)");
@@ -196,8 +487,42 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
     if args.is_empty() {
-        eprintln!("usage: srun list | srun <NAME> [ARGS...]");
+        eprintln!("usage: srun list | srun install-completions [--shell bash|zsh|fish] | srun <NAME> [ARGS...]");
         process::exit(1);
+    }
+
+    if args[0] == "__complete" {
+        let prefix = args.get(1).map(String::as_str).unwrap_or("");
+        if let Err(e) = cmd_complete(prefix) {
+            eprintln!("srun: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if args[0] == "completions" {
+        let shell = args.get(1).map(String::as_str).unwrap_or("");
+        match shell {
+            "bash" => print_completions_bash(),
+            "zsh" => print_completions_zsh(),
+            "fish" => print_completions_fish(),
+            _ => {
+                eprintln!("srun: completions: expected bash, zsh, or fish");
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if args[0] == "install-completions" {
+        match cmd_install_completions(&args[1..]) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("srun: {e}");
+                process::exit(1);
+            }
+        }
+        return;
     }
 
     if args[0] == "list" {
