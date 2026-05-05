@@ -9,4 +9,3 @@ cargo install --path .
 srun list
 srun <script_name>
 ```
-
