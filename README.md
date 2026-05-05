@@ -19,6 +19,10 @@ Everything is resolved relative to where you run `srun` (usually the repo root):
 
 ## Install
 
+**Prebuilt binaries** for Apple Silicon macOS, Linux x64, and Linux ARM64 are attached to each **[GitHub Release](https://github.com/Ahineya/srun/releases)** (`srun-darwin-arm64`, `srun-linux-amd64`, `srun-linux-arm64`). Download the file for your platform, put it on your `PATH`, and `chmod +x` if needed.
+
+From source:
+
 ```bash
 cargo install --path .
 ```
