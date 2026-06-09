@@ -19,6 +19,12 @@ Everything is resolved relative to where you run `srun` (usually the repo root):
 
 ## Install
 
+Easiest way is to clone the repo and install from Rust source:
+
+```bash
+cargo install --path .
+```
+
 **Prebuilt binaries** are on **[GitHub Releases](https://github.com/Ahineya/srun/releases)** as versioned archives: `srun-<version>-macos-aarch64.tar.gz`, `srun-<version>-linux-x86_64.tar.gz`, and `srun-<version>-linux-aarch64.tar.gz`, each with a `.sha256` file. Extract `srun` from the archive, put it on your `PATH`, and `chmod +x` if needed.
 
 ### macOS (download quarantine)
@@ -30,12 +36,6 @@ xattr -cr /path/to/srun
 ```
 
 (or `xattr -d com.apple.quarantine /path/to/srun` on that single file). Adjust the path to wherever you placed the binary.
-
-From source:
-
-```bash
-cargo install --path .
-```
 
 ## Usage
 
